@@ -7,3 +7,4 @@
 backup.py
 data/*
 __pycache__/
+results/
