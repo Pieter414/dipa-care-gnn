@@ -117,7 +117,8 @@ def undersample(pos_nodes, neg_nodes, scale=1):
 	"""
 
 	aux_nodes = cp.deepcopy(neg_nodes)
-	aux_nodes = rd.sample(aux_nodes, k=int(len(pos_nodes)*scale))
+	# aux_nodes = rd.sample(aux_nodes, k=int(len(pos_nodes)*scale))
+	aux_nodes = rd.sample(list(aux_nodes), k=int(len(pos_nodes)*scale))
 	batch_nodes = pos_nodes + aux_nodes
 
 	return batch_nodes
