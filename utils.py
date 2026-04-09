@@ -53,6 +53,18 @@ def load_data(data):
 		file.close()
 		with open(prefix + 'amz_uvu_adjlists.pickle', 'rb') as file:
 			relation3 = pickle.load(file)
+	elif data == 'comp':
+		# FDCompCN dataset (converted from DGL format by convert_fdcompcn.py)
+		feat_data = np.load(prefix + 'comp_features.npy')
+		labels = np.load(prefix + 'comp_labels.npy')
+		with open(prefix + 'comp_homo_adjlists.pickle', 'rb') as file:
+			homo = pickle.load(file)
+		with open(prefix + 'comp_rel1_adjlists.pickle', 'rb') as file:
+			relation1 = pickle.load(file)
+		with open(prefix + 'comp_rel2_adjlists.pickle', 'rb') as file:
+			relation2 = pickle.load(file)
+		with open(prefix + 'comp_rel3_adjlists.pickle', 'rb') as file:
+			relation3 = pickle.load(file)
 
 	return [homo, relation1, relation2, relation3], feat_data, labels
 
@@ -117,8 +129,7 @@ def undersample(pos_nodes, neg_nodes, scale=1):
 	"""
 
 	aux_nodes = cp.deepcopy(neg_nodes)
-	# aux_nodes = rd.sample(aux_nodes, k=int(len(pos_nodes)*scale))
-	aux_nodes = rd.sample(list(aux_nodes), k=int(len(pos_nodes)*scale))
+	aux_nodes = rd.sample(aux_nodes, k=int(len(pos_nodes)*scale))
 	batch_nodes = pos_nodes + aux_nodes
 
 	return batch_nodes

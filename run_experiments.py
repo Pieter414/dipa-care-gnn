@@ -46,160 +46,7 @@ from losses import build_loss, CARECompositeLoss
 
 DEFAULT_MODELS = ["CARE", "SAGE"]
 DEFAULT_LOSSES = ["ce", "weighted_ce", "focal", "label_smooth", "class_balanced", "dice", "care_composite"]
-DEFAULT_DATASETS = ["yelp", "amazon"]
-DEFAULT_SEEDS = [42, 72, 123, 256, 314, 512, 666, 777, 888, 999]
-
-RESULTS_DIR = Path("results")
-
-
-# ── Helpers ─────────────────────────────────────────────────────────────────
-
-def set_seed(seed: int):
-    """Set all random seeds for reproducibility."""
-    random.seed(seed)
-    np.random.seed(seed)
-    torch.manual_seed(seed)
-    if torch.cuda.is_available():
-        torch.cuda.manual_seed_all(seed)
-
-
-def build_model(model_name, feat_data, adj_lists, homo, args):
-    """Construct a GNN model and return (model, uses_label_scores)."""
-
-    features = nn.Embedding(feat_data.shape[0], feat_data.shape[1])
-    norm_feat = normalize(feat_data)
-    features.weight = nn.Parameter(torch.FloatTensor(norm_feat), requires_grad=False)
-    if args.cuda:
-        features = features.to(args.device)
-
-    if model_name == "CARE":
-        intra_aggs = [
-            IntraAgg(features, feat_data.shape[1], cuda=args.cuda)
-            for _ in range(3)
-        ]
-        inter1 = InterAgg(
-            features, feat_data.shape[1], args.emb_size,
-            adj_lists, intra_aggs,
-            inter=args.inter, step_size=args.step_size, cuda=args.cuda,
-        )
-        model = OneLayerCARE(2, inter1, lambda_1=args.lambda_1)
-        uses_label_scores = True
-
-    elif model_name == "SAGE":
-        agg1 = MeanAggregator(features, cuda=args.cuda)
-        enc1 = Encoder(
-            features, feat_data.shape[1], args.emb_size,
-            homo, agg1, gcn=True, cuda=args.cuda,
-        )
-        enc1.num_samples = 5
-        model = GraphSage(2, enc1)
-        uses_label_scores = False
-
-    else:
-        raise ValueError(f"Unknown model: {model_name}")
-
-    if args.cuda:
-        model = model.to(args.device)
-
-    return model, features, uses_label_scores
-
-
-def evaluate(model, test_nodes, test_labels, batch_size, uses_label_scores, cuda):
-    """Run evaluation and return a metrics dict."""
-    model.eval()
-    num_batches = int(len(test_nodes) / batch_size) + 1
-    all_gnn_probs = []
-    all_preds = []
-
-    with torch.no_grad():
-        for b in range(num_batches):
-            start = b * batch_size
-            end = min((b + 1) * batch_size, len(test_nodes))
-            if start >= end:
-                break
-            batch = test_nodes[start:end]
-            batch_labels = test_labels[start:end]
-
-            if uses_label_scores:
-                gnn_prob, _ = model.to_prob(batch, batch_labels, train_flag=False)
-            else:
-                gnn_prob = model.to_prob(batch)
-
-            probs_np = gnn_prob.data.cpu().numpy()
-            all_gnn_probs.extend(probs_np[:, 1].tolist())
-            all_preds.extend(probs_np.argmax(axis=1).tolist())
-
-    preds = np.array(all_preds)
-    probs = np.array(all_gnn_probs)
-
-    return {
-        "auc": roc_auc_score(test_labels, probs),
-        "ap": average_precision_score(test_labels, probs),
-        "f1_macro": f1_score(test_labels, preds, average="macro"),
-        "recall_macro": recall_score(test_labels, preds, average="macro"),
-        "accuracy": accuracy_score(test_labels, preds),
-    }
-
-
-# ── Single experiment ───────────────────────────────────────────────────────
-
-def run_single(model_name, loss_name, dataset, seed, args):
-    """Train and evaluate one (model, loss, dataset, seed) configuration."""
-    set_seed(seed)
-
-    # load data
-    [homo, rel1, rel2, rel3], feat_data, labels = load_data(dataset)
-    adj_lists = [rel1, rel2, rel3] if model_name == "CARE" else homo
-
-"""
-    Experiment runner for fraud detection GNN benchmarking.
-
-    Sweeps over: models × loss functions × datasets × random seeds.
-    Results are saved per-run as JSON and aggregated into a summary CSV.
-
-    Usage:
-        # Run all configurations (42 configs × 10 seeds = 420 runs)
-        python run_experiments.py
-
-        # Single run for debugging
-        python run_experiments.py --models SAGE --losses ce --datasets yelp --seeds 42
-
-        # Prioritize GraphSAGE across everything (if compute-limited)
-        python run_experiments.py --models SAGE
-
-        # Target a specific GPU (e.g. GPU 1)
-        python run_experiments.py --cuda-device 1
-"""
-
-import os
-import json
-import time
-import random
-import argparse
-import itertools
-from pathlib import Path
-from datetime import datetime
-
-import numpy as np
-import torch
-import torch.nn as nn
-from sklearn.model_selection import train_test_split
-from sklearn.metrics import (
-    roc_auc_score, average_precision_score,
-    f1_score, recall_score, accuracy_score,
-)
-
-from utils import load_data, normalize, pos_neg_split, undersample
-from model import OneLayerCARE
-from layers import InterAgg, IntraAgg
-from graphsage import GraphSage, MeanAggregator, Encoder
-from losses import build_loss, CARECompositeLoss
-
-# ── Defaults ────────────────────────────────────────────────────────────────
-
-DEFAULT_MODELS = ["CARE", "SAGE"]
-DEFAULT_LOSSES = ["ce", "weighted_ce", "focal", "label_smooth", "class_balanced", "dice", "care_composite"]
-DEFAULT_DATASETS = ["yelp", "amazon"]
+DEFAULT_DATASETS = ["yelp", "amazon", "comp"]
 DEFAULT_SEEDS = [42, 72, 123, 256, 314, 512, 666, 777, 888, 999]
 
 RESULTS_DIR = Path("results")
@@ -317,6 +164,13 @@ def run_single(model_name, loss_name, dataset, seed, args):
         idx_train, idx_test, y_train, y_test = train_test_split(
             index, labels[3305:], stratify=labels[3305:],
             test_size=0.60, random_state=2, shuffle=True,
+        )
+    elif dataset == "comp":
+        # FDCompCN: all nodes are labeled, use same 40/60 split
+        index = list(range(len(labels)))
+        idx_train, idx_test, y_train, y_test = train_test_split(
+            index, labels, stratify=labels, test_size=0.60,
+            random_state=2, shuffle=True,
         )
 
     train_pos, train_neg = pos_neg_split(idx_train, y_train)
@@ -463,8 +317,8 @@ def main():
                 all_results.append(json.load(f))
             continue
 
-        # adjust batch size per dataset (amazon is smaller)
-        if dataset == "amazon":
+        # adjust batch size per dataset (amazon and comp are smaller)
+        if dataset in ("amazon", "comp"):
             args.batch_size = 256
         else:
             args.batch_size = 1024
